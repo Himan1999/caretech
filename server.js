@@ -36,6 +36,7 @@ const pub = user => ({ name: user.name, email: user.email, role: user.role });
 const query = async (text, inputs = {}) => { const request = pool.request(); Object.entries(inputs).forEach(([key, value]) => request.input(key, value)); return (await request.query(text)).recordset; };
 const execute = async (text, inputs = {}) => { const request = pool.request(); Object.entries(inputs).forEach(([key, value]) => request.input(key, value)); return request.query(text); };
 const admin = (req, res, next) => req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Admins only' });
+const asyncRoute = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 
 async function ensureResetTokensTable() {
   await execute(`IF OBJECT_ID('dbo.PasswordResetTokens', 'U') IS NULL
@@ -49,12 +50,17 @@ async function ensureResetTokensTable() {
     )`);
 }
 
+async function ensureContactColumns() {
+  await execute(`IF COL_LENGTH('dbo.Orders', 'ContactPhone') IS NULL ALTER TABLE dbo.Orders ADD ContactPhone NVARCHAR(50) NULL;
+    IF COL_LENGTH('dbo.Users', 'Phone') IS NULL ALTER TABLE dbo.Users ADD Phone NVARCHAR(50) NULL;`);
+}
+
 async function auth(req, res, next) {
   try {
     const [body, signature] = (req.headers.authorization || '').replace('Bearer ', '').split('.');
     if (!body || mac(body) !== signature) throw new Error('invalid token');
     const token = JSON.parse(Buffer.from(body, 'base64url'));
-    req.user = (await query('SELECT Id AS id, Name AS name, Email AS email, Role AS role FROM dbo.Users WHERE Id = @id', { id: token.id }))[0];
+    req.user = (await query('SELECT Id AS id, Name AS name, Email AS email, Phone AS phone, Role AS role FROM dbo.Users WHERE Id = @id', { id: token.id }))[0];
     if (!req.user || token.exp < Date.now()) throw new Error('expired token');
     next();
   } catch { res.status(401).json({ error: 'Please log in' }); }
@@ -144,13 +150,13 @@ app.post('/api/reset-password', async (req, res) => {
   res.json({ message: 'Your password has been reset. You can now log in.' });
 });
 
-app.post('/api/orders', auth, async (req, res) => {
-  const { items = [], address, date, notes } = req.body, lines = [];
+app.post('/api/orders', auth, asyncRoute(async (req, res) => {
+  const { items = [], address, date, notes, phone = '' } = req.body, lines = [];
   let total = 0;
   for (const item of items) {
     const qty = Math.max(1, parseInt(item.qty) || 1), isService = item.type === 'service';
     const table = isService ? 'Services' : 'Products';
-    const found = (await query(`SELECT Id, Name, Price, Stock FROM dbo.${table} WHERE Id = @id AND IsActive = 1`, { id: item.id }))[0];
+    const found = (await query(`SELECT Id, Name, Price${isService ? '' : ', Stock'} FROM dbo.${table} WHERE Id = @id AND IsActive = 1`, { id: item.id }))[0];
     if (!found) return res.status(400).json({ error: 'An item in your cart is no longer available' });
     if (!isService && found.Stock < qty) return res.status(400).json({ error: `Only ${found.Stock} of ${found.Name} left in stock` });
     lines.push({ type: isService ? 'service' : 'product', id: found.Id, name: found.Name, price: Number(found.Price), qty });
@@ -158,22 +164,26 @@ app.post('/api/orders', auth, async (req, res) => {
   }
   if (!lines.length) return res.status(400).json({ error: 'Your cart is empty' });
   if (lines.some(line => line.type === 'service') && (!address || !date)) return res.status(400).json({ error: 'Add an address and preferred date for service bookings' });
+  if (phone) await execute('UPDATE dbo.Users SET Phone = @phone WHERE Id = @userId', { phone: phone.trim(), userId: req.user.id });
   const id = Date.now().toString(36), created = new Date().toISOString(), finalTotal = +total.toFixed(2);
   await execute('INSERT INTO dbo.Orders (Id, UserId, CustomerName, CustomerEmail, Total, Address, VisitDate, Notes, Status, CreatedAt) VALUES (@id, @userId, @customer, @email, @total, @address, @date, @notes, @status, @created)', { id, userId: req.user.id, customer: req.user.name, email: req.user.email, total: finalTotal, address: address || null, date: date || null, notes: notes || null, status: 'New', created });
+    await execute('INSERT INTO dbo.Orders (Id, UserId, CustomerName, CustomerEmail, ContactPhone, Total, Address, VisitDate, Notes, Status, CreatedAt) VALUES (@id, @userId, @customer, @email, @phone, @total, @address, @date, @notes, @status, @created)', { id, userId: req.user.id, customer: req.user.name, email: req.user.email, phone: phone || null, total: finalTotal, address: address || null, date: date || null, notes: notes || null, status: 'New', created });
   for (const line of lines) {
     await execute('INSERT INTO dbo.OrderItems (OrderId, ItemType, ItemId, ItemName, UnitPrice, Quantity) VALUES (@orderId, @type, @itemId, @name, @price, @qty)', { orderId: id, type: line.type, itemId: line.id, name: line.name, price: line.price, qty: line.qty });
     if (line.type === 'product') await execute('UPDATE dbo.Products SET Stock = Stock - @qty WHERE Id = @id', { qty: line.qty, id: line.id });
   }
   await execute('INSERT INTO dbo.Notifications (UserId, OrderId, Title, Message) VALUES (@userId, @orderId, @title, @message)', { userId: req.user.id, orderId: id, title: 'Order received', message: `Order ${id} is now being reviewed by the Eldavise team.` });
   res.json({ id, userId: req.user.id, customer: req.user.name, email: req.user.email, lines, total: finalTotal, address, date, notes, status: 'New', created });
-});
+  res.json({ id, userId: req.user.id, customer: req.user.name, email: req.user.email, phone, lines, total: finalTotal, address, date, notes, status: 'New', created });
+}));
 
 async function getOrders(user) {
   const orders = user.role === 'admin' ? await query('SELECT * FROM dbo.Orders ORDER BY CreatedAt DESC') : await query('SELECT * FROM dbo.Orders WHERE UserId = @userId ORDER BY CreatedAt DESC', { userId: user.id });
   if (!orders.length) return [];
   const lines = await query(`SELECT * FROM dbo.OrderItems WHERE OrderId IN (${orders.map((_, i) => `@o${i}`).join(',')})`, Object.fromEntries(orders.map((order, i) => [`o${i}`, order.Id])));
-  return orders.map(order => ({ id: order.Id, userId: order.UserId, customer: order.CustomerName, email: order.CustomerEmail, lines: lines.filter(line => line.OrderId === order.Id).map(line => ({ type: line.ItemType, id: line.ItemId, name: line.ItemName, price: Number(line.UnitPrice), qty: line.Quantity })), total: Number(order.Total), address: order.Address || '', date: order.VisitDate ? new Date(order.VisitDate).toISOString().slice(0, 10) : '', notes: order.Notes || '', status: order.Status, created: order.CreatedAt }));
+  return orders.map(order => ({ id: order.Id, userId: order.UserId, customer: order.CustomerName, email: order.CustomerEmail, phone: order.ContactPhone || '', lines: lines.filter(line => line.OrderId === order.Id).map(line => ({ type: line.ItemType, id: line.ItemId, name: line.ItemName, price: Number(line.UnitPrice), qty: line.Quantity })), total: Number(order.Total), address: order.Address || '', date: order.VisitDate ? new Date(order.VisitDate).toISOString().slice(0, 10) : '', notes: order.Notes || '', status: order.Status, created: order.CreatedAt }));
 }
+app.get('/api/admin/users', auth, admin, async (req, res) => res.json(await query("SELECT Id AS id, Name AS name, Email AS email, Phone AS phone, CreatedAt AS created FROM dbo.Users WHERE Role = 'customer' ORDER BY CreatedAt DESC")));
 
 app.get('/api/orders', auth, async (req, res) => res.json(await getOrders(req.user)));
 app.get('/api/notifications', auth, async (req, res) => res.json(await query('SELECT Id AS id, OrderId AS orderId, Title AS title, Message AS message, IsRead AS isRead, CreatedAt AS created FROM dbo.Notifications WHERE UserId = @userId ORDER BY CreatedAt DESC', { userId: req.user.id })));
@@ -194,6 +204,19 @@ app.patch('/api/orders/:id', auth, admin, async (req, res) => {
   res.json({ ok: true });
 });
 app.post('/api/products', auth, admin, async (req, res) => { const { name, price, stock, category, desc, brand, variant, compatibility, size, imageUrl } = req.body; if (!name || !(price >= 0)) return res.status(400).json({ error: 'Name and price are required' }); const product = { id: 'p' + Date.now(), name, category: category || 'Other', desc: desc || '', price: +price, stock: parseInt(stock) || 0, brand: brand || '', variant: variant || '', compatibility: compatibility || '', size: size || '', imageUrl: imageUrl || '' }; await execute('INSERT INTO dbo.Products (Id, Name, Category, Description, Price, Stock, Brand, Variant, Compatibility, Size, ImageUrl) VALUES (@id, @name, @category, @desc, @price, @stock, @brand, @variant, @compatibility, @size, @imageUrl)', product); res.json(product); });
+app.post('/api/services', auth, admin, async (req, res) => {
+  const { name, desc, price } = req.body;
+  if (!name || !(Number(price) >= 0)) return res.status(400).json({ error: 'Service name and price are required' });
+  const service = { id: 's' + Date.now(), name: name.trim(), desc: (desc || '').trim(), price: Number(price) };
+  await execute('INSERT INTO dbo.Services (Id, Name, Description, Price) VALUES (@id, @name, @description, @price)', { id: service.id, name: service.name, description: service.desc, price: service.price });
+  res.json(service);
+});
 app.delete('/api/products/:id', auth, admin, async (req, res) => { await execute('UPDATE dbo.Products SET IsActive = 0 WHERE Id = @id', { id: req.params.id }); res.json({ ok: true }); });
 
-pool.connect().then(ensureResetTokensTable).then(seed).then(() => app.listen(PORT, () => console.log(`Eldavise running at http://localhost:${PORT} using CareTechDB`))).catch(error => { console.error('Could not connect to CareTechDB:', error.message); process.exitCode = 1; });
+app.use((error, req, res, next) => {
+  console.error(`${req.method} ${req.path} failed:`, error.message);
+  if (res.headersSent) return next(error);
+  res.status(500).json({ error: 'Order could not be submitted. Please try again.' });
+});
+
+pool.connect().then(ensureResetTokensTable).then(ensureContactColumns).then(seed).then(() => app.listen(PORT, () => console.log(`Eldavise running at http://localhost:${PORT} using CareTechDB`))).catch(error => { console.error('Could not connect to CareTechDB:', error.message); process.exitCode = 1; });

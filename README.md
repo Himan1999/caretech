@@ -124,6 +124,7 @@ Do not commit administrator passwords or password hashes as documentation. Crede
 | `PATCH` | `/api/notifications/:id/read` | Bearer token | Mark a notification as read |
 | `GET` | `/api/admin/summary` | Admin token | Read dashboard metrics |
 | `PATCH` | `/api/orders/:id` | Admin token | Update an order status |
+| `POST` | `/api/services` | Admin token | Add a service |
 | `POST` | `/api/products` | Admin token | Add an accessory |
 | `DELETE` | `/api/products/:id` | Admin token | Deactivate an accessory |
 
