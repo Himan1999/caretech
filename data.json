@@ -2,8 +2,8 @@
   "users": [
     {
       "id": "admin",
-      "name": "careTech Admin",
-      "email": "admin@caretech.local",
+      "name": "Eldavise Admin",
+      "email": "admin@eldavise.local",
       "pass": "7dc2d8324702753a:49925ca160a8831c5a518e908ca75958d44311498dd1f2ef79ea8349ade85d11",
       "role": "admin"
     }

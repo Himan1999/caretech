@@ -1,4 +1,6 @@
-# careTech
+# Eldavise
+
+**Eldavise digital helpers**
 
 A lightweight service-booking and accessories storefront for customers who need practical help with phones, laptops, printers, and home technology.
 

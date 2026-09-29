@@ -1,7 +1,7 @@
 {
-  "name": "caretech",
+  "name": "eldavise",
   "version": "1.0.0",
-  "description": "careTech - device installation services and accessories shop",
+  "description": "Eldavise digital helpers - device installation services and accessories shop",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

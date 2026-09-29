@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.SECRET || 'change-me-before-going-live';
 const pool = new sql.ConnectionPool({
-  server: process.env.CARETECH_SQL_SERVER || 'VALKYRIE1047\\SQLEXPRESS',
+  server: process.env.CARETECH_SQL_SERVER || 'localhost\\SQLEXPRESS',
   database: process.env.CARETECH_SQL_DATABASE || 'CareTechDB',
   driver: 'ODBC Driver 17 for SQL Server',
   options: { trustedConnection: true, trustServerCertificate: true }
@@ -38,7 +38,7 @@ async function auth(req, res, next) {
 async function seed() {
   const old = fs.existsSync('data.json') ? JSON.parse(fs.readFileSync('data.json')) : null;
   if (!(await query('SELECT COUNT(*) AS count FROM dbo.Users'))[0].count) {
-    const users = old?.users?.length ? old.users : [{ id: 'admin', name: 'careTech Admin', email: 'admin@caretech.local', pass: hash('admin123'), role: 'admin' }];
+    const users = old?.users?.length ? old.users : [{ id: 'admin', name: 'Eldavise Admin', email: 'admin@eldavise.local', pass: hash('admin123'), role: 'admin' }];
     for (const user of users) await execute('INSERT INTO dbo.Users (Id, Name, Email, PasswordHash, Role) VALUES (@id, @name, @email, @pass, @role)', { id: user.id, name: user.name, email: user.email, pass: user.pass, role: user.role });
   }
   if (!(await query('SELECT COUNT(*) AS count FROM dbo.Services'))[0].count) {
@@ -92,7 +92,7 @@ app.post('/api/orders', auth, async (req, res) => {
     await execute('INSERT INTO dbo.OrderItems (OrderId, ItemType, ItemId, ItemName, UnitPrice, Quantity) VALUES (@orderId, @type, @itemId, @name, @price, @qty)', { orderId: id, type: line.type, itemId: line.id, name: line.name, price: line.price, qty: line.qty });
     if (line.type === 'product') await execute('UPDATE dbo.Products SET Stock = Stock - @qty WHERE Id = @id', { qty: line.qty, id: line.id });
   }
-  await execute('INSERT INTO dbo.Notifications (UserId, OrderId, Title, Message) VALUES (@userId, @orderId, @title, @message)', { userId: req.user.id, orderId: id, title: 'Order received', message: `Order ${id} is now being reviewed by the careTech team.` });
+  await execute('INSERT INTO dbo.Notifications (UserId, OrderId, Title, Message) VALUES (@userId, @orderId, @title, @message)', { userId: req.user.id, orderId: id, title: 'Order received', message: `Order ${id} is now being reviewed by the Eldavise team.` });
   res.json({ id, userId: req.user.id, customer: req.user.name, email: req.user.email, lines, total: finalTotal, address, date, notes, status: 'New', created });
 });
 
@@ -124,4 +124,4 @@ app.patch('/api/orders/:id', auth, admin, async (req, res) => {
 app.post('/api/products', auth, admin, async (req, res) => { const { name, price, stock, category, desc, brand, variant, compatibility, size, imageUrl } = req.body; if (!name || !(price >= 0)) return res.status(400).json({ error: 'Name and price are required' }); const product = { id: 'p' + Date.now(), name, category: category || 'Other', desc: desc || '', price: +price, stock: parseInt(stock) || 0, brand: brand || '', variant: variant || '', compatibility: compatibility || '', size: size || '', imageUrl: imageUrl || '' }; await execute('INSERT INTO dbo.Products (Id, Name, Category, Description, Price, Stock, Brand, Variant, Compatibility, Size, ImageUrl) VALUES (@id, @name, @category, @desc, @price, @stock, @brand, @variant, @compatibility, @size, @imageUrl)', product); res.json(product); });
 app.delete('/api/products/:id', auth, admin, async (req, res) => { await execute('UPDATE dbo.Products SET IsActive = 0 WHERE Id = @id', { id: req.params.id }); res.json({ ok: true }); });
 
-pool.connect().then(seed).then(() => app.listen(PORT, () => console.log(`careTech running at http://localhost:${PORT} using CareTechDB`))).catch(error => { console.error('Could not connect to CareTechDB:', error.message); process.exitCode = 1; });
+pool.connect().then(seed).then(() => app.listen(PORT, () => console.log(`Eldavise running at http://localhost:${PORT} using CareTechDB`))).catch(error => { console.error('Could not connect to CareTechDB:', error.message); process.exitCode = 1; });
