@@ -25,6 +25,7 @@ The application combines a static browser interface with an Express API. Custome
 - Express 4
 - Microsoft SQL Server
 - `mssql` with `msnodesqlv8`
+- Nodemailer for password-reset email delivery
 - Vanilla HTML, CSS, and JavaScript
 
 ## Requirements
@@ -48,8 +49,15 @@ Configure the connection in the environment for your SQL Server instance:
 ```powershell
 $env:PORT = "3000"
 $env:SECRET = "replace-with-a-long-random-secret"
+$env:APP_URL = "http://localhost:3000"
 $env:CARETECH_SQL_SERVER = "YOUR_SQL_SERVER_INSTANCE"
 $env:CARETECH_SQL_DATABASE = "CareTechDB"
+$env:SMTP_HOST = "smtp.example.com"
+$env:SMTP_PORT = "587"
+$env:SMTP_SECURE = "false"
+$env:SMTP_USER = "your-smtp-user"
+$env:SMTP_PASS = "your-smtp-password"
+$env:SMTP_FROM = "Eldavise <no-reply@example.com>"
 ```
 
 The application uses Windows integrated authentication through `msnodesqlv8`. Confirm that the Windows account running Node.js can connect to the configured SQL Server database.
@@ -70,20 +78,30 @@ The server connects to SQL Server, seeds empty tables from `data.json`, and then
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP port for the Express server |
 | `SECRET` | `change-me-before-going-live` | HMAC secret used to sign authentication tokens |
+| `APP_URL` | `http://localhost:3000` | Public base URL used in password-reset links |
 | `CARETECH_SQL_SERVER` | `YOUR_SQL_SERVER_INSTANCE` | SQL Server instance name |
 | `CARETECH_SQL_DATABASE` | `CareTechDB` | SQL Server database name |
+| `SMTP_HOST` | Not set | SMTP server hostname; required for password reset emails |
+| `SMTP_PORT` | `587` | SMTP server port |
+| `SMTP_SECURE` | `false` | Use TLS-secured SMTP transport when set to `true` |
+| `SMTP_USER` | Not set | SMTP username |
+| `SMTP_PASS` | Not set | SMTP password |
+| `SMTP_FROM` | `SMTP_USER` | Sender address for password-reset emails |
 
 Set a strong `SECRET` outside development. Do not use the default value in a deployed environment.
+
+Password reset requires the SMTP variables above. The server creates the `PasswordResetTokens` table automatically when it starts, sends one-hour reset links to the email address on the account, and invalidates each link after it is used.
 
 ## Application Workflows
 
 ### Customers
 
 1. Open the storefront and browse services or accessories.
-2. Register with a name, email address, and password of at least six characters, or sign in.
-3. Add services or in-stock accessories to the cart.
-4. Provide service visit details when booking a service.
-5. Submit the order and follow status updates from the order history.
+2. Register with a name, valid email address, and password of at least eight characters containing uppercase, lowercase, and a number, or sign in.
+3. Use **Forgot password?** on the login screen to receive a reset link when needed.
+4. Add services or in-stock accessories to the cart.
+5. Provide service visit details when booking a service.
+6. Submit the order and follow status updates from the order history.
 
 ### Administrators
 
@@ -98,6 +116,8 @@ Do not commit administrator passwords or password hashes as documentation. Crede
 | `GET` | `/api/catalog` | Public | List active services and products |
 | `POST` | `/api/register` | Public | Create a customer account |
 | `POST` | `/api/login` | Public | Authenticate a user |
+| `POST` | `/api/forgot-password` | Public | Send a password-reset link |
+| `POST` | `/api/reset-password` | Public | Set a new password with a reset token |
 | `POST` | `/api/orders` | Bearer token | Create an order |
 | `GET` | `/api/orders` | Bearer token | List the current user's orders |
 | `GET` | `/api/notifications` | Bearer token | List user notifications |
