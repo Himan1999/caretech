@@ -1,0 +1,14 @@
+{
+  "name": "caretech",
+  "version": "1.0.0",
+  "description": "careTech - device installation services and accessories shop",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "msnodesqlv8": "^5.5.0",
+    "mssql": "^12.7.2"
+  }
+}

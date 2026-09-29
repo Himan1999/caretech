@@ -1,0 +1,98 @@
+{
+  "users": [
+    {
+      "id": "admin",
+      "name": "careTech Admin",
+      "email": "admin@caretech.local",
+      "pass": "7dc2d8324702753a:49925ca160a8831c5a518e908ca75958d44311498dd1f2ef79ea8349ade85d11",
+      "role": "admin"
+    }
+  ],
+  "orders": [],
+  "services": [
+    {
+      "id": "s1",
+      "name": "Printer installation",
+      "desc": "Unboxing, setup, driver install, Wi-Fi and test print.",
+      "price": 59
+    },
+    {
+      "id": "s2",
+      "name": "Laptop setup",
+      "desc": "Windows/macOS setup, updates, accounts, essential software.",
+      "price": 79
+    },
+    {
+      "id": "s3",
+      "name": "Phone setup and data transfer",
+      "desc": "New phone configuration and moving your data across.",
+      "price": 49
+    }
+  ],
+  "products": [
+    {
+      "id": "p1",
+      "name": "USB-C charging cable (2 m)",
+      "category": "Cables",
+      "desc": "Braided, 100 W fast charge.",
+      "price": 14.99,
+      "stock": 50
+    },
+    {
+      "id": "p2",
+      "name": "HDMI cable (3 m)",
+      "category": "Cables",
+      "desc": "4K at 60 Hz.",
+      "price": 12.99,
+      "stock": 40
+    },
+    {
+      "id": "p3",
+      "name": "Wireless mouse",
+      "category": "Laptop",
+      "desc": "Silent clicks, USB receiver.",
+      "price": 19.99,
+      "stock": 30
+    },
+    {
+      "id": "p4",
+      "name": "Laptop sleeve 15\"",
+      "category": "Laptop",
+      "desc": "Padded and water resistant.",
+      "price": 24.99,
+      "stock": 25
+    },
+    {
+      "id": "p5",
+      "name": "Phone case",
+      "category": "Phone",
+      "desc": "Shock absorbing, clear.",
+      "price": 16.99,
+      "stock": 60
+    },
+    {
+      "id": "p6",
+      "name": "Tempered glass screen protector",
+      "category": "Phone",
+      "desc": "2-pack with alignment tray.",
+      "price": 9.99,
+      "stock": 80
+    },
+    {
+      "id": "p7",
+      "name": "Printer paper (500 sheets)",
+      "category": "Printer",
+      "desc": "A4 / Letter 80 gsm.",
+      "price": 8.99,
+      "stock": 100
+    },
+    {
+      "id": "p8",
+      "name": "Ink cartridge set",
+      "category": "Printer",
+      "desc": "Black + colour multipack.",
+      "price": 44.99,
+      "stock": 20
+    }
+  ]
+}
