@@ -41,12 +41,12 @@ The repository does not include database migrations or table-creation scripts. T
 npm install
 ```
 
-Configure the connection in the environment, if the defaults do not match your machine:
+Configure the connection in the environment for your SQL Server instance:
 
 ```powershell
 $env:PORT = "3000"
 $env:SECRET = "replace-with-a-long-random-secret"
-$env:CARETECH_SQL_SERVER = "localhost\SQLEXPRESS"
+$env:CARETECH_SQL_SERVER = "YOUR_SQL_SERVER_INSTANCE"
 $env:CARETECH_SQL_DATABASE = "CareTechDB"
 ```
 
@@ -68,7 +68,7 @@ The server connects to SQL Server, seeds empty tables from `data.json`, and then
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP port for the Express server |
 | `SECRET` | `change-me-before-going-live` | HMAC secret used to sign authentication tokens |
-| `CARETECH_SQL_SERVER` | `VALKYRIE1047\\SQLEXPRESS` | SQL Server instance name |
+| `CARETECH_SQL_SERVER` | `YOUR_SQL_SERVER_INSTANCE` | SQL Server instance name |
 | `CARETECH_SQL_DATABASE` | `CareTechDB` | SQL Server database name |
 
 Set a strong `SECRET` outside development. Do not use the default value in a deployed environment.
