@@ -99,9 +99,11 @@ Password reset requires the SMTP variables above. The server creates the `Passwo
 1. Open the storefront and browse services or accessories.
 2. Register with a name, valid email address, and password of at least eight characters containing uppercase, lowercase, and a number, or sign in.
 3. Use **Forgot password?** on the login screen to receive a reset link when needed.
-4. Add services or in-stock accessories to the cart.
-5. Provide service visit details when booking a service.
-6. Submit the order and follow status updates from the order history.
+4. Book a service as a guest by entering a name, email, phone number, address, and preferred date; no account is needed to place the appointment.
+5. Create an account or sign in later with the same email to claim and track guest appointments in order history.
+6. Sign in to purchase accessories and track all orders.
+
+The navigation has separate entry pages: `index.html` (Services/Home), `accessories.html`, `cart.html`, `orders.html`, `login.html`, `register.html`, `forgot-password.html`, and `admin.html`. These pages share the same application shell and browser session. The admin entry redirects to an admin-only view; admin API endpoints also enforce authorization.
 
 ### Administrators
 
@@ -118,11 +120,12 @@ Do not commit administrator passwords or password hashes as documentation. Crede
 | `POST` | `/api/login` | Public | Authenticate a user |
 | `POST` | `/api/forgot-password` | Public | Send a password-reset link |
 | `POST` | `/api/reset-password` | Public | Set a new password with a reset token |
-| `POST` | `/api/orders` | Bearer token | Create an order |
+| `POST` | `/api/orders` | Optional for service-only guest appointments; bearer token for account orders | Create an order |
 | `GET` | `/api/orders` | Bearer token | List the current user's orders |
 | `GET` | `/api/notifications` | Bearer token | List user notifications |
 | `PATCH` | `/api/notifications/:id/read` | Bearer token | Mark a notification as read |
 | `GET` | `/api/admin/summary` | Admin token | Read dashboard metrics |
+| `GET` | `/api/admin/users` | Admin token | List customer contact details |
 | `PATCH` | `/api/orders/:id` | Admin token | Update an order status |
 | `POST` | `/api/services` | Admin token | Add a service |
 | `POST` | `/api/products` | Admin token | Add an accessory |

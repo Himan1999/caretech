@@ -27,12 +27,17 @@ const hash = (password, salt = crypto.randomBytes(8).toString('hex')) => salt + 
 const verify = (password, stored) => hash(password, stored.split(':')[0]) === stored;
 const normalizeEmail = value => String(value || '').trim().toLowerCase();
 const validEmail = email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const normalizeCanadianPhone = value => {
+  let digits = String(value || '').replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('1')) digits = digits.slice(1);
+  return /^[2-9]\d{2}[2-9]\d{6}$/.test(digits) ? `+1${digits}` : '';
+};
 const validPassword = password => typeof password === 'string' && password.length >= 8 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /\d/.test(password);
 const hashResetToken = token => crypto.createHash('sha256').update(token).digest('hex');
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
 const mac = body => crypto.createHmac('sha256', SECRET).update(body).digest('base64url');
 const sign = user => { const body = Buffer.from(JSON.stringify({ id: user.id, exp: Date.now() + 6048e5 })).toString('base64url'); return body + '.' + mac(body); };
-const pub = user => ({ name: user.name, email: user.email, role: user.role });
+const pub = user => ({ name: user.name, email: user.email, phone: user.phone || '', role: user.role });
 const query = async (text, inputs = {}) => { const request = pool.request(); Object.entries(inputs).forEach(([key, value]) => request.input(key, value)); return (await request.query(text)).recordset; };
 const execute = async (text, inputs = {}) => { const request = pool.request(); Object.entries(inputs).forEach(([key, value]) => request.input(key, value)); return request.query(text); };
 const admin = (req, res, next) => req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Admins only' });
@@ -53,6 +58,40 @@ async function ensureResetTokensTable() {
 async function ensureContactColumns() {
   await execute(`IF COL_LENGTH('dbo.Orders', 'ContactPhone') IS NULL ALTER TABLE dbo.Orders ADD ContactPhone NVARCHAR(50) NULL;
     IF COL_LENGTH('dbo.Users', 'Phone') IS NULL ALTER TABLE dbo.Users ADD Phone NVARCHAR(50) NULL;`);
+}
+
+async function ensureGuestOrders() {
+  await execute(`IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Orders_Users')
+      AND EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Orders') AND name = 'UserId' AND is_nullable = 0)
+      ALTER TABLE dbo.Orders DROP CONSTRAINT FK_Orders_Users;
+    IF EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('dbo.Orders') AND name = 'UserId' AND is_nullable = 0)
+      ALTER TABLE dbo.Orders ALTER COLUMN UserId NVARCHAR(64) COLLATE SQL_Latin1_General_CP1_CI_AS NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Orders_Users')
+      ALTER TABLE dbo.Orders ADD CONSTRAINT FK_Orders_Users FOREIGN KEY (UserId) REFERENCES dbo.Users(Id);`);
+}
+
+async function attachGuestOrdersToUser(user) {
+  await execute('UPDATE dbo.Orders SET UserId = @userId WHERE UserId IS NULL AND LOWER(CustomerEmail) = @email', { userId: user.id, email: normalizeEmail(user.email) });
+  if (!user.phone) {
+    const guestPhone = (await query('SELECT TOP 1 ContactPhone AS phone FROM dbo.Orders WHERE UserId = @userId AND ContactPhone IS NOT NULL ORDER BY CreatedAt DESC', { userId: user.id }))[0]?.phone;
+    if (guestPhone) {
+      user.phone = normalizeCanadianPhone(guestPhone) || guestPhone;
+      await execute("UPDATE dbo.Users SET Phone = @phone WHERE Id = @userId AND (Phone IS NULL OR Phone = '')", { phone: user.phone, userId: user.id });
+    }
+  }
+}
+
+async function optionalAuth(req, res, next) {
+  const authorization = req.headers.authorization;
+  if (!authorization) return next();
+  try {
+    const [body, signature] = authorization.replace('Bearer ', '').split('.');
+    if (!body || mac(body) !== signature) throw new Error('invalid token');
+    const token = JSON.parse(Buffer.from(body, 'base64url'));
+    req.user = (await query('SELECT Id AS id, Name AS name, Email AS email, Phone AS phone, Role AS role FROM dbo.Users WHERE Id = @id', { id: token.id }))[0];
+    if (!req.user || token.exp < Date.now()) throw new Error('expired token');
+    next();
+  } catch { res.status(401).json({ error: 'Your session expired. Please log in again.' }); }
 }
 
 async function auth(req, res, next) {
@@ -103,14 +142,16 @@ app.post('/api/register', async (req, res) => {
   if ((await query('SELECT 1 FROM dbo.Users WHERE Email = @email', { email: normalized })).length) return res.status(400).json({ error: 'That email is already registered' });
   const user = { id: crypto.randomUUID(), name, email: normalized, pass: hash(password), role: 'customer' };
   await execute('INSERT INTO dbo.Users (Id, Name, Email, PasswordHash, Role) VALUES (@id, @name, @email, @pass, @role)', { id: user.id, name: user.name, email: user.email, pass: user.pass, role: user.role });
+  await attachGuestOrdersToUser(user);
   res.json({ token: sign(user), user: pub(user) });
 });
 
 app.post('/api/login', async (req, res) => {
   const email = normalizeEmail(req.body.email);
   if (!validEmail(email)) return res.status(400).json({ error: 'Enter a valid email address' });
-  const user = (await query('SELECT Id AS id, Name AS name, Email AS email, PasswordHash AS pass, Role AS role FROM dbo.Users WHERE Email = @email', { email }))[0];
+  const user = (await query('SELECT Id AS id, Name AS name, Email AS email, Phone AS phone, PasswordHash AS pass, Role AS role FROM dbo.Users WHERE Email = @email', { email }))[0];
   if (!user || !verify(req.body.password || '', user.pass)) return res.status(401).json({ error: 'Wrong email or password' });
+  await attachGuestOrdersToUser(user);
   res.json({ token: sign(user), user: pub(user) });
 });
 
@@ -150,8 +191,8 @@ app.post('/api/reset-password', async (req, res) => {
   res.json({ message: 'Your password has been reset. You can now log in.' });
 });
 
-app.post('/api/orders', auth, asyncRoute(async (req, res) => {
-  const { items = [], address, date, notes, phone = '' } = req.body, lines = [];
+app.post('/api/orders', optionalAuth, asyncRoute(async (req, res) => {
+  const { items = [], address, date, notes, phone = '', customerName = '', customerEmail = '' } = req.body, lines = [];
   let total = 0;
   for (const item of items) {
     const qty = Math.max(1, parseInt(item.qty) || 1), isService = item.type === 'service';
@@ -163,18 +204,26 @@ app.post('/api/orders', auth, asyncRoute(async (req, res) => {
     total += Number(found.Price) * qty;
   }
   if (!lines.length) return res.status(400).json({ error: 'Your cart is empty' });
-  if (lines.some(line => line.type === 'service') && (!address || !date)) return res.status(400).json({ error: 'Add an address and preferred date for service bookings' });
-  if (phone) await execute('UPDATE dbo.Users SET Phone = @phone WHERE Id = @userId', { phone: phone.trim(), userId: req.user.id });
-  const id = Date.now().toString(36), created = new Date().toISOString(), finalTotal = +total.toFixed(2);
-  await execute('INSERT INTO dbo.Orders (Id, UserId, CustomerName, CustomerEmail, Total, Address, VisitDate, Notes, Status, CreatedAt) VALUES (@id, @userId, @customer, @email, @total, @address, @date, @notes, @status, @created)', { id, userId: req.user.id, customer: req.user.name, email: req.user.email, total: finalTotal, address: address || null, date: date || null, notes: notes || null, status: 'New', created });
-    await execute('INSERT INTO dbo.Orders (Id, UserId, CustomerName, CustomerEmail, ContactPhone, Total, Address, VisitDate, Notes, Status, CreatedAt) VALUES (@id, @userId, @customer, @email, @phone, @total, @address, @date, @notes, @status, @created)', { id, userId: req.user.id, customer: req.user.name, email: req.user.email, phone: phone || null, total: finalTotal, address: address || null, date: date || null, notes: notes || null, status: 'New', created });
+  const hasService = lines.some(line => line.type === 'service');
+  if (hasService && (!address || !date)) return res.status(400).json({ error: 'Add an address and preferred date for service bookings' });
+  if (!req.user && (!hasService || lines.some(line => line.type !== 'service'))) return res.status(401).json({ error: 'Please log in to order accessories. Service appointments can be booked as a guest.' });
+  const orderName = req.user?.name || customerName.trim();
+  const orderEmail = req.user?.email || normalizeEmail(customerEmail);
+  const rawPhone = String(phone || req.user?.phone || '').trim();
+  const orderPhone = normalizeCanadianPhone(rawPhone);
+  if (!orderName) return res.status(400).json({ error: 'Enter your name to book a service' });
+  if (!validEmail(orderEmail)) return res.status(400).json({ error: 'Enter a valid email address for your appointment' });
+  if (hasService && !rawPhone) return res.status(400).json({ error: 'Enter a Canadian phone number so we can contact you about the appointment' });
+  if (rawPhone && !orderPhone) return res.status(400).json({ error: 'Enter a valid Canadian number: 10 digits after +1, with a valid area code' });
+  if (phone && req.user) await execute('UPDATE dbo.Users SET Phone = @phone WHERE Id = @userId', { phone: orderPhone, userId: req.user.id });
+  const id = Date.now().toString(36) + crypto.randomBytes(3).toString('hex'), created = new Date().toISOString(), finalTotal = +total.toFixed(2);
+  await execute('INSERT INTO dbo.Orders (Id, UserId, CustomerName, CustomerEmail, ContactPhone, Total, Address, VisitDate, Notes, Status, CreatedAt) VALUES (@id, @userId, @customer, @email, @phone, @total, @address, @date, @notes, @status, @created)', { id, userId: req.user?.id || null, customer: orderName, email: orderEmail, phone: orderPhone, total: finalTotal, address: address || null, date: date || null, notes: notes || null, status: 'New', created });
   for (const line of lines) {
     await execute('INSERT INTO dbo.OrderItems (OrderId, ItemType, ItemId, ItemName, UnitPrice, Quantity) VALUES (@orderId, @type, @itemId, @name, @price, @qty)', { orderId: id, type: line.type, itemId: line.id, name: line.name, price: line.price, qty: line.qty });
     if (line.type === 'product') await execute('UPDATE dbo.Products SET Stock = Stock - @qty WHERE Id = @id', { qty: line.qty, id: line.id });
   }
-  await execute('INSERT INTO dbo.Notifications (UserId, OrderId, Title, Message) VALUES (@userId, @orderId, @title, @message)', { userId: req.user.id, orderId: id, title: 'Order received', message: `Order ${id} is now being reviewed by the Eldavise team.` });
-  res.json({ id, userId: req.user.id, customer: req.user.name, email: req.user.email, lines, total: finalTotal, address, date, notes, status: 'New', created });
-  res.json({ id, userId: req.user.id, customer: req.user.name, email: req.user.email, phone, lines, total: finalTotal, address, date, notes, status: 'New', created });
+  if (req.user?.id) await execute('INSERT INTO dbo.Notifications (UserId, OrderId, Title, Message) VALUES (@userId, @orderId, @title, @message)', { userId: req.user.id, orderId: id, title: 'Order received', message: `Order ${id} is now being reviewed by the Eldavise team.` });
+  res.json({ id, userId: req.user?.id || null, customer: orderName, email: orderEmail, phone: orderPhone, guest: !req.user, trackingMessage: req.user ? '' : 'Appointment booked. Create an account with this email to track it online.', lines, total: finalTotal, address, date, notes, status: 'New', created });
 }));
 
 async function getOrders(user) {
@@ -183,7 +232,16 @@ async function getOrders(user) {
   const lines = await query(`SELECT * FROM dbo.OrderItems WHERE OrderId IN (${orders.map((_, i) => `@o${i}`).join(',')})`, Object.fromEntries(orders.map((order, i) => [`o${i}`, order.Id])));
   return orders.map(order => ({ id: order.Id, userId: order.UserId, customer: order.CustomerName, email: order.CustomerEmail, phone: order.ContactPhone || '', lines: lines.filter(line => line.OrderId === order.Id).map(line => ({ type: line.ItemType, id: line.ItemId, name: line.ItemName, price: Number(line.UnitPrice), qty: line.Quantity })), total: Number(order.Total), address: order.Address || '', date: order.VisitDate ? new Date(order.VisitDate).toISOString().slice(0, 10) : '', notes: order.Notes || '', status: order.Status, created: order.CreatedAt }));
 }
-app.get('/api/admin/users', auth, admin, async (req, res) => res.json(await query("SELECT Id AS id, Name AS name, Email AS email, Phone AS phone, CreatedAt AS created FROM dbo.Users WHERE Role = 'customer' ORDER BY CreatedAt DESC")));
+app.get('/api/admin/users', auth, admin, async (req, res) => res.json(await query(`SELECT name, email, phone, created, customerType, appointments FROM (
+  SELECT u.Name AS name, u.Email AS email, COALESCE(NULLIF(u.Phone, ''), (SELECT TOP 1 o.ContactPhone FROM dbo.Orders o WHERE o.UserId = u.Id AND NULLIF(o.ContactPhone, '') IS NOT NULL ORDER BY o.CreatedAt DESC), '') AS phone, u.CreatedAt AS created, 'Account' AS customerType,
+    (SELECT COUNT(*) FROM dbo.Orders o WHERE o.UserId = u.Id) AS appointments
+  FROM dbo.Users u WHERE u.Role = 'customer'
+  UNION ALL
+  SELECT MAX(o.CustomerName) AS name, LOWER(o.CustomerEmail) AS email, COALESCE(MAX(o.ContactPhone), '') AS phone,
+    MIN(o.CreatedAt) AS created, 'Guest booking' AS customerType, COUNT(*) AS appointments
+  FROM dbo.Orders o WHERE o.UserId IS NULL AND o.CustomerEmail IS NOT NULL
+  GROUP BY LOWER(o.CustomerEmail)
+) AS customers ORDER BY created DESC`)));
 
 app.get('/api/orders', auth, async (req, res) => res.json(await getOrders(req.user)));
 app.get('/api/notifications', auth, async (req, res) => res.json(await query('SELECT Id AS id, OrderId AS orderId, Title AS title, Message AS message, IsRead AS isRead, CreatedAt AS created FROM dbo.Notifications WHERE UserId = @userId ORDER BY CreatedAt DESC', { userId: req.user.id })));
@@ -194,15 +252,27 @@ app.get('/api/admin/summary', auth, admin, async (req, res) => {
   res.json({ customers: summary.customers, orders: summary.orders, openOrders: summary.openOrders, revenue: Number(summary.revenue) });
 });
 
-app.patch('/api/orders/:id', auth, admin, async (req, res) => {
+app.patch('/api/orders/:id', auth, admin, asyncRoute(async (req, res) => {
   const allowed = ['New', 'Confirmed', 'In progress', 'Completed', 'Cancelled'];
   if (!allowed.includes(req.body.status)) return res.status(400).json({ error: 'Invalid order status' });
   const order = (await query('SELECT * FROM dbo.Orders WHERE Id = @id', { id: req.params.id }))[0];
   if (!order) return res.status(404).json({ error: 'Order not found' });
   await execute('UPDATE dbo.Orders SET Status = @status WHERE Id = @id', { status: req.body.status, id: req.params.id });
-  await execute('INSERT INTO dbo.Notifications (UserId, OrderId, Title, Message) VALUES (@userId, @orderId, @title, @message)', { userId: order.UserId, orderId: order.Id, title: 'Order status updated', message: `Order ${order.Id} is now ${req.body.status}.` });
+  if (order.UserId) {
+    await execute('INSERT INTO dbo.Notifications (UserId, OrderId, Title, Message) VALUES (@userId, @orderId, @title, @message)', { userId: order.UserId, orderId: order.Id, title: 'Order status updated', message: `Order ${order.Id} is now ${req.body.status}.` });
+  } else if (resetMailer && order.CustomerEmail) {
+    try {
+      await resetMailer.sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: order.CustomerEmail,
+        subject: `Eldavise appointment ${order.Id} update`,
+        text: `Hello ${order.CustomerName},\n\nYour Eldavise appointment ${order.Id} is now ${req.body.status}. Sign in with this email to track it online.`,
+        html: `<p>Hello ${escapeHtml(order.CustomerName)},</p><p>Your Eldavise appointment <b>${escapeHtml(order.Id)}</b> is now <b>${escapeHtml(req.body.status)}</b>.</p><p>Sign in with this email to track it online.</p>`
+      });
+    } catch (error) { console.error('Could not email guest order update:', error.message); }
+  }
   res.json({ ok: true });
-});
+}));
 app.post('/api/products', auth, admin, async (req, res) => { const { name, price, stock, category, desc, brand, variant, compatibility, size, imageUrl } = req.body; if (!name || !(price >= 0)) return res.status(400).json({ error: 'Name and price are required' }); const product = { id: 'p' + Date.now(), name, category: category || 'Other', desc: desc || '', price: +price, stock: parseInt(stock) || 0, brand: brand || '', variant: variant || '', compatibility: compatibility || '', size: size || '', imageUrl: imageUrl || '' }; await execute('INSERT INTO dbo.Products (Id, Name, Category, Description, Price, Stock, Brand, Variant, Compatibility, Size, ImageUrl) VALUES (@id, @name, @category, @desc, @price, @stock, @brand, @variant, @compatibility, @size, @imageUrl)', product); res.json(product); });
 app.post('/api/services', auth, admin, async (req, res) => {
   const { name, desc, price } = req.body;
@@ -219,4 +289,4 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Order could not be submitted. Please try again.' });
 });
 
-pool.connect().then(ensureResetTokensTable).then(ensureContactColumns).then(seed).then(() => app.listen(PORT, () => console.log(`Eldavise running at http://localhost:${PORT} using CareTechDB`))).catch(error => { console.error('Could not connect to CareTechDB:', error.message); process.exitCode = 1; });
+pool.connect().then(ensureResetTokensTable).then(ensureContactColumns).then(ensureGuestOrders).then(seed).then(() => app.listen(PORT, () => console.log(`Eldavise running at http://localhost:${PORT} using CareTechDB`))).catch(error => { console.error('Could not connect to CareTechDB:', error.message); process.exitCode = 1; });
