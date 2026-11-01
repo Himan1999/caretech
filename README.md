@@ -103,7 +103,7 @@ Password reset requires the SMTP variables above. The server creates the `Passwo
 5. Create an account or sign in later with the same email to claim and track guest appointments in order history.
 6. Sign in to purchase accessories and track all orders.
 
-The navigation has separate entry pages: `index.html` (Services/Home), `accessories.html`, `cart.html`, `orders.html`, `login.html`, `register.html`, `forgot-password.html`, and `admin.html`. These pages share the same application shell and browser session. The admin entry redirects to an admin-only view; admin API endpoints also enforce authorization.
+The navigation has separate entry pages: `index.html` (Services/Home), `accessories.html`, `cart.html`, `orders.html`, `login.html`, `register.html`, `forgot-password.html`, and `admin.html`, stored under `apps/web/public/`. These pages share the same application shell and browser session. The admin entry redirects to an admin-only view; admin API endpoints also enforce authorization.
 
 ### Administrators
 
@@ -141,12 +141,18 @@ Authorization: Bearer <token>
 
 ```text
 .
-├── data.json          # Seed data for users, services, and products
-├── package.json       # Dependencies and npm scripts
-├── server.js          # Express server, authentication, API, and database access
-└── public/
-    └── index.html     # Browser application
+├── apps/
+│   └── web/
+│       ├── data.json  # Seed data for users, services, and products
+│       ├── server.js  # Express server, authentication, API, and database access
+│       └── public/    # Browser application pages and assets
+├── docs/
+│   └── architecture.md
+├── package.json       # Dependencies and root npm scripts
+└── README.md
 ```
+
+See [docs/architecture.md](docs/architecture.md) for how the app is organized and started.
 
 ## Security Notes
 
@@ -154,7 +160,7 @@ Authorization: Bearer <token>
 - Keep database connection details outside source control where possible.
 - Passwords are stored as salted `scrypt` hashes; the original passwords cannot be recovered from the stored values.
 - Use HTTPS and a production-grade secret-management solution when deploying publicly.
-- Review `data.json` before publishing because it contains seed account metadata and should not be treated as a production credential store.
+- Review `apps/web/data.json` before publishing because it contains seed account metadata and should not be treated as a production credential store.
 
 ## Development
 

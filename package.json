@@ -2,9 +2,9 @@
   "name": "eldavise",
   "version": "1.0.0",
   "description": "Eldavise digital helpers - device installation services and accessories shop",
-  "main": "server.js",
+  "main": "apps/web/server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node apps/web/server.js"
   },
   "dependencies": {
     "express": "^4.19.2",
